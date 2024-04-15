@@ -43,11 +43,14 @@ python geojson_filter.py --input "path/to/input.geojson" --output "path/to/outpu
 
 Developed by: [Your Name or Your Organization]
 """
+
 __author__ = "defmon3@github"
 __version__ = "1.0.0"
 __license__ = "GNUv3"
 __website__ = "https://github.com/Defmon3"
 
+import cProfile
+import pstats
 from typing import Tuple, List, Any
 
 import fiona
@@ -57,12 +60,22 @@ from shapely import Point
 from shapely.geometry import shape
 from shapely.ops import transform
 
+crs_wgs = CRS('EPSG:4326')
+transformers = {}
+
 
 class InvalidGeometry(Exception):
     """
     Exception raised for invalid geometries during processing.
     """
     pass
+
+
+def get_transformer(utm_zone: int) -> Transformer:
+    if utm_zone not in transformers:
+        log.debug(f"Creating transformer for UTM zone {utm_zone}")
+        transformers.setdefault(utm_zone, Transformer.from_crs(crs_wgs, CRS(f'EPSG:326{utm_zone}'), always_xy=True))
+    return transformers[utm_zone]
 
 
 def determine_utm_zone(lon: float) -> int:
@@ -92,10 +105,7 @@ def get_feature(feature: dict) -> Tuple[Point, float, float, float]:
     geom = shape(feature['geometry'])
     centroid = geom.centroid
     utm_zone = determine_utm_zone(centroid.x)
-    crs_wgs = CRS('EPSG:4326')
-    crs_utm = CRS(f'EPSG:326{utm_zone}')
-    transformer = Transformer.from_crs(crs_wgs, crs_utm, always_xy=True)
-
+    transformer = get_transformer(utm_zone)
     geom_transformed = transform(transformer.transform, geom)
     if not geom_transformed.is_valid:
         log.warning("Invalid geometry skipped.")
@@ -130,7 +140,6 @@ def filter_polygons(
             CSV file with latitude and longitude of centroids of polygons that meet the criteria.
         """
 
-
     max_upper: int = max(input_width, input_height) + hysteresis
     max_lower: int = max(max(input_width, input_height) - hysteresis, 0)  # Prevent negative bounds
     min_upper: int = min(input_width, input_height) + hysteresis
@@ -142,14 +151,16 @@ def filter_polygons(
 
     log.info("Loading GeoJSON file...")
 
-    with fiona.open(geojson_input_path) as input_file:
-        log.debug(f"Found {len(input_file)} features in the GeoJSON file.")
+    with fiona.open(geojson_input_path) as (input_file):
+        log.info(f"Found {len(input_file)} features in the GeoJSON file.")
         log_str = f"Filtering Geojson for a shape with the sizes [{max_upper}-{max_lower}]x[{min_upper}-{min_lower}] with hysteresis {hysteresis}m"
         if compare_area:
             log_str += f" and area with the size: {a_min}-{a_max}m²"
         log.info(log_str)
 
-        for feature in input_file:
+        for n, feature in enumerate(input_file):
+            if n >= 10000:
+                break
             try:
                 centroid, width, height, area = get_feature(feature)
             except InvalidGeometry:
@@ -164,12 +175,13 @@ def filter_polygons(
                     f"Width: {width}, Height: {height}, Area: {area}, Lat/Lon: {centroid.y}, {centroid.x}")
                 output.append((centroid.y, centroid.x))
 
-    log.success("Filtered GeoJSON has been saved successfully.")
+    log.success(f"Found {len(output)} matching polygons. Writing to CSV...")
 
     with open(csv_output_file, "w") as f:
         f.write("Latitude,Longitude\n")
         for lat, lon in output:
             f.write(f"{lat},{lon}\n")
+    log.success("Filtered GeoJSON has been saved successfully.")
 
 
 def match_geometry(
@@ -206,6 +218,7 @@ def match_geometry(
         valid = match_geometry(55, 45, 35, 25, 2200, 45, 50, True, 2300, 2100)
         print(valid)  # Output: True if it fits all criteria, False otherwise.
     """
+
     if max_upper > max(width, height) > max_lower and min_upper > min(width, height) > min_lower:
         return compare_area and a_max > area > a_min
     return False
@@ -223,7 +236,13 @@ def main():
                         help='Compare with area (used to filter out holes in buildings)', default=50)
     parser.add_argument('--hysteresis', type=int, help='Hysteresis in meters', default=10)
     args = parser.parse_args()
+
+    #profiler = cProfile.Profile()
+    #profiler.enable()
     filter_polygons(args.input, args.output, args.width, args.height, args.hysteresis, args.area)
+    #profiler.disable()
+    #stats = pstats.Stats(profiler).sort_stats('cumulative')
+    #stats.print_stats()
 
 
 if __name__ == '__main__':
