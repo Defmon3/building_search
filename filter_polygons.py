@@ -49,8 +49,6 @@ __version__ = "1.0.0"
 __license__ = "GNUv3"
 __website__ = "https://github.com/Defmon3"
 
-import cProfile
-import pstats
 from typing import Tuple, List, Any
 
 import fiona
@@ -72,6 +70,7 @@ class InvalidGeometry(Exception):
 
 
 def get_transformer(utm_zone: int) -> Transformer:
+    """Get a Pyproj transformer for a specific UTM zone. Only create them once"""
     if utm_zone not in transformers:
         log.debug(f"Creating transformer for UTM zone {utm_zone}")
         transformers.setdefault(utm_zone, Transformer.from_crs(crs_wgs, CRS(f'EPSG:326{utm_zone}'), always_xy=True))
@@ -159,8 +158,6 @@ def filter_polygons(
         log.info(log_str)
 
         for n, feature in enumerate(input_file):
-            if n >= 10000:
-                break
             try:
                 centroid, width, height, area = get_feature(feature)
             except InvalidGeometry:
@@ -237,12 +234,12 @@ def main():
     parser.add_argument('--hysteresis', type=int, help='Hysteresis in meters', default=10)
     args = parser.parse_args()
 
-    #profiler = cProfile.Profile()
-    #profiler.enable()
+    # profiler = cProfile.Profile()
+    # profiler.enable()
     filter_polygons(args.input, args.output, args.width, args.height, args.hysteresis, args.area)
-    #profiler.disable()
-    #stats = pstats.Stats(profiler).sort_stats('cumulative')
-    #stats.print_stats()
+    # profiler.disable()
+    # stats = pstats.Stats(profiler).sort_stats('cumulative')
+    # stats.print_stats()
 
 
 if __name__ == '__main__':
